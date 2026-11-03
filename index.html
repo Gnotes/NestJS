@@ -39,7 +39,7 @@
     }
     .landscape-tip {
       position: fixed; inset: 0; z-index: 50;
-      background: var(--bg);
+      background: var(--bg);1
       flex-direction: column; align-items: center; justify-content: center; gap: 16px;
     }
     .landscape-tip .tip-icon { width: 64px; height: 64px; color: var(--muted); stroke-width: 1.6; }
@@ -70,7 +70,7 @@
     /* ===== 画布 + 抽屉（60%） ===== */
     .stage { flex: 1; display: flex; min-width: 0; overflow: hidden; }
 
-    /* ===== 代码演示面板（打字机）：>1500px 左右分栏，≤1500px 上下分栏 ===== */
+    /* ===== 代码演示面板（打字机）：>1000px 左右分栏，≤1000px 上下分栏 ===== */
     .work { flex: 1; min-height: 0; display: flex; flex-direction: column; }
     .code-demo {
       flex: 0 0 auto; height: clamp(150px, 38vh, 300px);
@@ -98,7 +98,7 @@
     .cd-cur { color: #fde047; font-weight: 600; animation: cdFade .5s ease; }
     @keyframes cdFade { from { opacity: 0; } to { opacity: 1; } }
     @keyframes cdBlink { 50% { opacity: 0; } }
-    @media (min-width: 1501px) {
+    @media (min-width: 1000px) {
       .work { flex-direction: row; }
       .code-demo { flex: 0 0 460px; width: 460px; height: auto; border-top: none; border-left: 1px solid var(--line); }
     }
