@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NestJS 生命周期教程 — 启动与请求双阶段概念详解</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e7490'/%3E%3Cpath d='M16 8l8 16h-4l-1.6-3.2h-4.8L16 8z' fill='%23e0f2fe'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #060a14;
+      --panel: #0f1728;
+      --panel-2: #131e31;
+      --line: #22304a;
+      --text: #e6edf7;
+      --muted: #7d8aa3;
+      --accent: #22d3ee;
+      --accent-strong: #67e8f9;
+      --accent-soft: #0e7490;
+      --warn: #f59e0b;
+      --warn-strong: #fbbf24;
+      --err: #ef4444;
+      --drawer-w: 60vw;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      overflow: hidden;
+    }
+
+    /* ===== 竖屏横屏提示 ===== */
+    .landscape-tip { display: none; }
+    @media (max-aspect-ratio: 1/1) {
+      .landscape-tip { display: flex; }
+      /* 主内容保持渲染（提示层覆盖其上），避免 SVG 在 display:none 下初始化失败导致动画/点击失效 */
+    }
+    .landscape-tip {
+      position: fixed; inset: 0; z-index: 50;
+      background: var(--bg);
+      flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+    }
+    .landscape-tip .tip-icon { width: 64px; height: 64px; color: var(--muted); stroke-width: 1.6; }
+    .landscape-tip p { color: var(--muted); font-size: 16px; }
+
+    /* ===== 主布局 ===== */
+    .main-wrap { width: 100%; height: 100%; display: flex; flex-direction: column; }
+    header {
+      height: 52px; flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px; border-bottom: 1px solid var(--line);
+    }
+    header h1 { font-size: 15px; font-weight: 600; }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .stage-badge { display: flex; align-items: center; gap: 14px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
+    .badge .dot { width: 9px; height: 9px; border-radius: 50%; }
+    .badge .dot.la { background: #67e8f9; box-shadow: 0 0 8px rgba(34,211,238,.6); }
+    .badge .dot.lb { background: #fbbf24; box-shadow: 0 0 8px rgba(245,158,11,.6); }
+    .toolbar { display: flex; gap: 10px; }
+    .toolbar button {
+      padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
+      font-size: 13px; transition: background .2s ease;
+    }
+    #btnCtrl { background: var(--accent-soft); color: #fff; min-width: 64px; }
+    #btnCtrl:hover { background: var(--accent); color: #062a3a; }
+
+    /* ===== 画布 + 抽屉（60%） ===== */
+    .stage { flex: 1; display: flex; min-width: 0; overflow: hidden; }
+
+    /* ===== 代码演示面板（打字机）：>1500px 左右分栏，≤1500px 上下分栏 ===== */
+    .work { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .code-demo {
+      flex: 0 0 auto; height: clamp(150px, 38vh, 300px);
+      background: var(--panel); border-top: 1px solid var(--line);
+      padding: 10px 16px 12px; display: flex; flex-direction: column; min-height: 0;
+    }
+    .code-head { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+    .cd-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .cd-file {
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+      color: var(--accent-strong); background: rgba(34,211,238,.08);
+      border: 1px solid rgba(34,211,238,.3); padding: 2px 8px; border-radius: 5px;
+    }
+    .cd-stage { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 1px; }
+    .cd-step { font-size: 13px; color: var(--text); font-weight: 600; line-height: 1.4; }
+    .cd-code {
+      flex: 1; margin: 0; overflow: auto; white-space: pre;
+      scrollbar-gutter: stable;
+      background: #0b1120; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 10px 12px; font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12.5px; line-height: 1.55; color: #d7e2f4;
+    }
+    .cd-caret { color: var(--accent); animation: cdBlink 1s steps(1) infinite; }
+    .cd-code span { transition: color .45s ease; }
+    .cd-cur { color: #fde047; font-weight: 600; animation: cdFade .5s ease; }
+    @keyframes cdFade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes cdBlink { 50% { opacity: 0; } }
+    @media (min-width: 1501px) {
+      .work { flex-direction: row; }
+      .code-demo { flex: 0 0 460px; width: 460px; height: auto; border-top: none; border-left: 1px solid var(--line); }
+    }
+    /* 抽屉展开后：动画与代码演示改为上下布局；代码面板铺满宽度 */
+    .work.open-drawer { flex-direction: column; }
+    .work.open-drawer .code-demo {
+      flex: 0 0 auto; width: 100%; height: clamp(150px, 38vh, 300px);
+      border-top: 1px solid var(--line); border-left: none;
+    }
+    .svg-wrap {
+      width: 100%; min-width: 0;
+      display: flex; flex-direction: column;
+      padding: 14px 14px 6px;
+      transition: width .5s cubic-bezier(.22,1,.36,1);
+    }
+    .stage.open .svg-wrap { width: calc(100% - var(--drawer-w)); }
+    .svg-wrap .pipeline-svg { flex: 1; min-height: 0; width: 100%; }
+    .svg-wrap .data-rail { flex: 0 0 auto; margin-top: 8px; }
+
+    .drawer {
+      width: 0; flex-shrink: 0; overflow: hidden;
+      transition: width .5s cubic-bezier(.22,1,.36,1);
+    }
+    .stage.open .drawer { width: var(--drawer-w); }
+    .drawer-inner {
+      width: var(--drawer-w); height: 100%;
+      background: var(--panel); border-left: 1px solid var(--line);
+      padding: 20px; overflow-y: auto;
+    }
+    .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .drawer-head h2 { font-size: 18px; font-weight: 700; }
+    .drawer-close {
+      background: none; border: none; color: var(--muted);
+      font-size: 24px; cursor: pointer; line-height: 1; transition: color .2s;
+    }
+    .drawer-close:hover { color: var(--text); }
+    .drawer-body { color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .drawer-body .placeholder {
+      border: 1px dashed var(--line); border-radius: 8px;
+      padding: 14px; margin: 12px 0; color: #64748b; font-size: 13px;
+    }
+
+    /* ===== 抽屉详情排版 ===== */
+    .d-tag {
+      display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 1px;
+      padding: 2px 10px; border-radius: 999px; margin-bottom: 12px;
+    }
+    .d-tag.a { color: #67e8f9; background: rgba(34,211,238,.08); border: 1px solid rgba(34,211,238,.4); }
+    .d-tag.b { color: #fbbf24; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.4); }
+    .d-tag.err { color: #fde047; background: rgba(250,204,21,.08); border: 1px solid rgba(250,204,21,.5); }
+    .d-sec { margin: 16px 0 20px; }
+    .d-sec h3 {
+      font-size: 13px; font-weight: 700; color: var(--text);
+      margin: 0 0 8px; display: flex; align-items: center; gap: 7px;
+    }
+    .d-sec h3::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--accent-soft); }
+    .d-sec p { margin: 0; color: #b6c2d9; font-size: 13.5px; }
+    .d-sec pre {
+      margin: 0; padding: 12px 14px; border-radius: 8px;
+      background: #0b1120; border: 1px solid #1e293b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px; line-height: 1.6; color: #d7e2f4;
+      overflow-x: auto; white-space: pre;
+    }
+    .d-sec ul { margin: 0; padding-left: 18px; color: #b6c2d9; font-size: 13.5px; }
+    .d-sec li { margin: 6px 0; }
+    .d-sec li strong { color: #e2e8f0; font-weight: 600; }
+
+    /* ===== SVG ===== */
+    .app-label { fill: var(--accent); font-size: 14px; font-weight: 700; letter-spacing: 2px; }
+    .app-sub { fill: var(--muted); font-size: 10.5px; letter-spacing: 1px; }
+
+    /* 平滑 S 连接线段：A 启动（青） / B 请求（橙） */
+    .seg-line { fill: none; stroke-width: 2.5; transition: all .25s ease; }
+    .seg-line.a { stroke: rgba(34,211,238,.4); }
+    .seg-line.b { stroke: rgba(245,158,11,.4); }
+    .seg-line.a.on { stroke: var(--accent-strong); filter: drop-shadow(0 0 6px rgba(34,211,238,.8)); }
+    .seg-line.b.on { stroke: var(--warn-strong); filter: drop-shadow(0 0 6px rgba(245,158,11,.8)); }
+    .filter-line { stroke: rgba(250,204,21,.55); stroke-width: 1.8; fill: none; stroke-dasharray: 6 6; opacity: .55; }
+
+    .ring-node { cursor: pointer; }
+    .ring-node .ring {
+      fill: var(--panel-2); stroke: var(--muted); stroke-width: 2;
+      stroke-dasharray: 7 7; opacity: .55;
+      transition: all .25s ease;
+    }
+    .ring-node:hover .ring { stroke: var(--accent); opacity: .85; }
+    .ring-node .name { fill: var(--text); font-weight: 600; text-anchor: middle; }
+    .ring-node .role { fill: var(--muted); text-anchor: middle; }
+    .ring-node.lv1 .name { font-size: 16px; }
+    .ring-node.lv1 .role { font-size: 11px; }
+    .ring-node.lv2 .name { font-size: 14px; }
+    .ring-node.lv2 .role { font-size: 10px; }
+    .ring-node.lv3 .name { font-size: 12px; }
+    .ring-node.lv3 .role { font-size: 9px; }
+
+    /* 阶段常驻色 */
+    .ring-node.stage-a .ring { stroke: rgba(34,211,238,.55); }
+    .ring-node.stage-b .ring { stroke: rgba(245,158,11,.55); }
+    .ring-node.stage-a.final .name { fill: #67e8f9; }
+    .ring-node.branch .ring { stroke-dasharray: 6 6; stroke: rgba(250,204,21,.6); }
+    .ring-node.branch .name { fill: #fde047; }
+    .ring-node.branch .role { fill: rgba(253,224,71,.7); }
+
+    /* 进入（激活）高亮 */
+    .ring-node.stage-a.active .ring { stroke: var(--accent-strong); stroke-width: 3; stroke-dasharray: none; opacity: 1; }
+    .ring-node.stage-a.active .name { fill: var(--accent-strong); }
+    .ring-node.stage-a.active .role { fill: var(--accent-strong); }
+    .ring-node.stage-a.active { filter: drop-shadow(0 0 14px rgba(34,211,238,.7)); }
+    .ring-node.stage-b.active .ring { stroke: var(--warn-strong); stroke-width: 3; stroke-dasharray: none; opacity: 1; }
+    .ring-node.stage-b.active .name { fill: var(--warn-strong); }
+    .ring-node.stage-b.active .role { fill: var(--warn-strong); }
+    .ring-node.stage-b.active { filter: drop-shadow(0 0 14px rgba(245,158,11,.7)); }
+    .ring-node.branch.active .ring { stroke: #fde047; stroke-width: 3; stroke-dasharray: none; opacity: 1; }
+    .ring-node.branch.active .name { fill: #fde047; }
+    .ring-node.branch.active .role { fill: #fde047; }
+    .ring-node.branch.active { filter: drop-shadow(0 0 14px rgba(250,204,21,.7)); }
+
+    .ring-node.selected .ring { stroke: #ffffff; stroke-width: 3; stroke-dasharray: none; opacity: 1; }
+    .ring-node.selected .name { fill: #ffffff; }
+    .ring-node.selected .role { fill: #cbd5e1; }
+    .ring-node.selected { filter: drop-shadow(0 0 14px rgba(255,255,255,.5)); }
+
+    /* 核心概念（Module / Controller / Service）：专属紫色（仅常驻标识，高亮回归阶段色） */
+    .ring-node.core .ring { stroke: rgba(167,139,250,.6); }
+    .ring-node.core .name { fill: #c4b5fd; }
+    .ring-node.core .role { fill: rgba(196,181,253,.72); }
+    .ring-node.core.selected .ring { stroke: #ffffff; }
+    .ring-node.core.selected .name { fill: #ffffff; }
+
+    .packet-trail { opacity: .4; }
+    .packet-trail-2 { opacity: .16; }
+    .packet-trail-3 { opacity: .07; }
+
+    /* 数据形态胶囊：A 青 / B 橙 */
+    /* 数据形态条：两段胶囊（启动阶段 / 请求阶段），纯点样式 */
+    .rail { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+    .rail-group { display: flex; align-items: center; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    .cap {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 7px; border-radius: 999px;
+      background: var(--panel-2); border: 1px solid var(--line);
+      transition: all .3s ease;
+    }
+    .cap .dot { width: 6px; height: 6px; border-radius: 50%; background: #475569; transition: background .3s; }
+    .cap.a { border-color: rgba(34,211,238,.45); }
+    .cap.b { border-color: rgba(245,158,11,.45); }
+    .cap.a.on { background: rgba(34,211,238,.12); border-color: var(--accent); color: var(--accent); }
+    .cap.a.on .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .cap.b.on { background: rgba(245,158,11,.12); border-color: var(--warn); color: var(--warn); }
+    .cap.b.on .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+    .cap.branch { border-style: dashed; border-color: rgba(250,204,21,.5); }
+    .cap.branch.on { border-color: #fde047; color: #fde047; background: rgba(250,204,21,.12); }
+    .cap.branch.on .dot { background: #fde047; box-shadow: 0 0 8px rgba(250,204,21,.8); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .packet-glow { animation: none; }
+      .packet-trail, .packet-trail-2, .packet-trail-3 { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <!-- 竖屏横屏提示 -->
+  <div class="landscape-tip" role="alert">
+    <svg class="tip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <rect x="3" y="6" width="18" height="12" rx="2"/>
+      <path d="M12 3v3M12 18v3M3 12H1M23 12h-2"/>
+    </svg>
+    <p>请将设备横屏查看</p>
+  </div>
+
+  <div class="main-wrap">
+    <header>
+      <h1>NestJS 生命周期</h1>
+      <div class="header-right">
+        <div class="stage-badge">
+          <span class="badge"><span class="dot la"></span>启动阶段</span>
+          <span class="badge"><span class="dot lb"></span>请求阶段</span>
+        </div>
+        <div class="toolbar">
+          <button id="btnCtrl" type="button">暂停</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="work" id="work">
+    <div id="stage" class="stage">
+      <div id="svgWrap" class="svg-wrap">
+        <svg class="pipeline-svg" viewBox="0 0 900 900" preserveAspectRatio="xMidYMid meet"
+             aria-label="NestJS 生命周期：平滑 S 曲线串联启动与请求阶段">
+
+          <!-- 数据包（顶层） -->
+          <circle id="pkt3" class="packet-trail-3" r="6" fill="#22d3ee" />
+          <circle id="pkt2" class="packet-trail-2" r="8" fill="#22d3ee" />
+          <circle id="pkt1" class="packet-trail" r="10" fill="#22d3ee" />
+
+          <!-- ===== 平滑连接线段：A 段（青） / B 段（橙），折弯处三次贝塞尔 ===== -->
+          <path class="seg-line a" id="s0"  d="M172,150 L260,150" />
+          <path class="seg-line a" id="s1"  d="M340,150 L416,150" />
+          <path class="seg-line a" id="s2"  d="M544,150 L620,150" />
+          <path class="seg-line a" id="s3"  d="M700,150 L800,150" />
+          <path class="seg-line a" id="s4"  d="M868,178 C900,178 900,363 877,363" />
+          <path class="seg-line b" id="s5"  d="M788,400 L700,400" />
+          <path class="seg-line b" id="s6"  d="M608,400 L520,400" />
+          <path class="seg-line b" id="s7"  d="M440,400 L340,400" />
+          <path class="seg-line b" id="s8"  d="M260,400 L160,400" />
+          <path class="seg-line b" id="s9"  d="M92,428 C60,428 60,622 92,622" />
+          <path class="seg-line b" id="s10" d="M160,650 L236,650" />
+          <path class="seg-line b" id="s11" d="M364,650 L416,650" />
+          <path class="seg-line b" id="s12" d="M544,650 L620,650" />
+          <path class="seg-line b" id="s13" d="M700,650 L788,650" />
+
+          <!-- ===== A 启动阶段（Row1 左→右 + Row2 右端） ===== -->
+          <g class="ring-node lv2 stage-a" data-idx="100" data-cap="0" transform="translate(120,150)">
+            <circle class="ring" r="52" />
+            <text class="name" y="-4">AppModule</text>
+            <text class="role" y="20">根模块 · 应用图起点</text>
+          </g>
+          <g class="ring-node lv3 stage-a" data-idx="101" data-cap="1" transform="translate(300,150)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">imports</text>
+            <text class="role" y="16">递归加载 Module</text>
+          </g>
+          <g class="ring-node lv1 core stage-a" data-idx="102" data-cap="2" transform="translate(480,150)">
+            <circle class="ring" r="64" />
+            <text class="name" y="-6">Module</text>
+            <text class="role" y="26">扫描元数据并声明</text>
+          </g>
+          <g class="ring-node lv3 stage-a" data-idx="103" data-cap="3" transform="translate(660,150)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">实例化 Provider</text>
+            <text class="role" y="16">构建 DI 容器</text>
+          </g>
+          <g class="ring-node lv3 stage-a" data-idx="104" data-cap="4" transform="translate(840,150)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">注册路由</text>
+            <text class="role" y="16">@Controller / @Get</text>
+          </g>
+          <g class="ring-node lv2 final stage-a" data-idx="105" data-cap="5" transform="translate(840,400)">
+            <circle class="ring" r="52" />
+            <text class="name" y="-4">应用就绪</text>
+            <text class="role" y="20">可接收请求</text>
+          </g>
+
+          <!-- ===== B 请求阶段（Row2 右→左 + Row3 左→右） ===== -->
+          <g class="ring-node lv2 stage-b" data-idx="0" data-cap="10" transform="translate(660,400)">
+            <circle class="ring" r="52" />
+            <text class="name" y="-4">Request</text>
+            <text class="role" y="20">外部进入</text>
+          </g>
+          <g class="ring-node lv3 stage-b" data-idx="1" data-cap="11" transform="translate(480,400)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">Middleware</text>
+            <text class="role" y="16">透传 · 增强</text>
+          </g>
+          <g class="ring-node lv3 stage-b" data-idx="2" data-cap="12" transform="translate(300,400)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">Guard</text>
+            <text class="role" y="16">鉴权 · 上下文</text>
+          </g>
+          <g class="ring-node lv3 stage-b" data-idx="3" data-cap="13" transform="translate(120,400)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">Interceptor</text>
+            <text class="role" y="16">前置 · 拦截</text>
+          </g>
+          <g class="ring-node lv3 stage-b" data-idx="4" data-cap="14" transform="translate(120,650)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">Pipe</text>
+            <text class="role" y="16">校验 · 转 DTO</text>
+          </g>
+          <g class="ring-node lv1 core stage-b" data-idx="5" data-cap="15" transform="translate(300,650)">
+            <circle class="ring" r="64" />
+            <text class="name" y="-6">Controller</text>
+            <text class="role" y="26">路由分配</text>
+          </g>
+          <g class="ring-node lv1 core stage-b" data-idx="6" data-cap="16" transform="translate(480,650)">
+            <circle class="ring" r="64" />
+            <text class="name" y="-6">Service</text>
+            <text class="role" y="26">业务逻辑</text>
+          </g>
+          <g class="ring-node lv3 stage-b" data-idx="7" data-cap="17" transform="translate(660,650)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-3">Interceptor</text>
+            <text class="role" y="16">后置 · 包装</text>
+          </g>
+          <g class="ring-node lv2 stage-b" data-idx="9" data-cap="18" transform="translate(840,650)">
+            <circle class="ring" r="52" />
+            <text class="name" y="-4">Response</text>
+            <text class="role" y="20">返回客户端</text>
+          </g>
+
+          <!-- 异常兜底：ExceptionFilter（红色虚线分支，挂在返回段） -->
+          <path class="filter-line" d="M660,696 L660,758" />
+          <g class="ring-node lv3 branch" data-idx="8" data-cap="19" transform="translate(660,800)">
+            <circle class="ring" r="40" />
+            <text class="name" y="-7" font-size="10">Exception</text>
+            <text class="name" y="9" font-size="10">Filter</text>
+            <text class="role" y="24">异常兜底</text>
+          </g>
+        </svg>
+      </div>
+
+      <!-- ===== 右侧抽屉（60%） ===== -->
+      <aside id="drawer" class="drawer" aria-hidden="true">
+        <div class="drawer-inner">
+          <div class="drawer-head">
+            <h2 id="drawerTitle">-- 点击节点查看详情 --</h2>
+            <button id="closeDrawer" class="drawer-close" type="button" aria-label="关闭">×</button>
+          </div>
+          <div id="drawerBody" class="drawer-body">
+            <div class="placeholder">[布局占位] 概念定义 · 管线阶段 · 用法示例 · 参数 · 注意事项</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+      <!-- ===== 阶段代码演示（打字机，随动画阶段切换） ===== -->
+      <section class="code-demo" aria-label="阶段代码演示">
+        <div class="code-head">
+          <div class="cd-top">
+            <span id="cdFile" class="cd-file">app.module.ts</span>
+            <span id="cdStage" class="cd-stage">启动阶段</span>
+          </div>
+          <span id="cdStep" class="cd-step">准备演示…</span>
+        </div>
+        <pre id="cdCode" class="cd-code"></pre>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var stage = document.getElementById('stage');
+      var drawer = document.getElementById('drawer');
+      var drawerTitle = document.getElementById('drawerTitle');
+      var drawerBody = document.getElementById('drawerBody');
+      var closeBtn = document.getElementById('closeDrawer');
+
+      var caps = Array.prototype.slice.call(document.querySelectorAll('.cap'));
+      var nodes = Array.prototype.slice.call(document.querySelectorAll('.ring-node'));
+
+      // 平滑 S 轨道：用 14 段线段几何直接采样（分段长度累积 → 定位段 → 段内取点）
+      // 移动端若先以竖屏加载，容器不可见时 getTotalLength 可能返回 0 或抛错；
+      // 因此改为 measureTrack() 可重试测量，并在转屏/窗口尺寸变化后重新测量，
+      // 保证横屏后动画与点击事件始终可用。
+      var segEls = [];
+      for (var k = 0; k < 14; k++) segEls.push(document.getElementById('s' + k));
+      var SEG_LEN = [];
+      var TRACK_LEN = 0;
+      var BOUNDS = [0];
+      function measureTrack() {
+        var lens = [], sum = 0;
+        for (var i = 0; i < 14; i++) {
+          var l;
+          try { l = segEls[i].getTotalLength(); } catch (e) { l = 0; }
+          if (!(l > 0)) return false;
+          lens.push(l);
+          sum += l;
+        }
+        SEG_LEN = lens;
+        TRACK_LEN = sum;
+        BOUNDS = [0];
+        var acc = 0;
+        lens.forEach(function (x) { acc += x; BOUNDS.push(acc); });
+        return true;
+      }
+      var trackReady = measureTrack();
+      if (!trackReady) {
+        (function retry() {
+          if (measureTrack()) return;
+          requestAnimationFrame(retry);
+        })();
+      }
+
+      // 路径点 → 高亮节点 data-idx / 胶囊 cap（A 启动 0-5，B 请求 6-14）
+      var map = [
+        { node: 100, cap: 0 },  // 0  AppModule
+        { node: 101, cap: 1 },  // 1  imports
+        { node: 102, cap: 2 },  // 2  扫描元数据
+        { node: 103, cap: 3 },  // 3  实例化 Provider
+        { node: 104, cap: 4 },  // 4  注册路由
+        { node: 105, cap: 5 },  // 5  应用就绪
+        { node: 0,   cap: 10 }, // 6  Request
+        { node: 1,   cap: 11 }, // 7  Middleware
+        { node: 2,   cap: 12 }, // 8  Guard
+        { node: 3,   cap: 13 }, // 9  Interceptor 前置
+        { node: 4,   cap: 14 }, // 10 Pipe
+        { node: 5,   cap: 15 }, // 11 Controller
+        { node: 6,   cap: 16 }, // 12 Service
+        { node: 7,   cap: 17 }, // 13 Interceptor 后置
+        { node: 9,   cap: 18 }  // 14 Response
+      ];
+      var segIds = ['s0','s1','s2','s3','s4','s5','s6','s7','s8','s9','s10','s11','s12','s13'];
+
+      var progress = 0;
+      var DURATION = 42000; // 总循环时长（ms）：30s → 42s（每段约 3s，便于阅读代码）
+      var playing = true;
+      var selected = -1;
+      var last = null;
+      var btnState = 'pause'; // 与 playing 同步：pause(播放中) | play(已暂停)
+
+      var pkt1 = document.getElementById('pkt1');
+      var pkt2 = document.getElementById('pkt2');
+      var pkt3 = document.getElementById('pkt3');
+
+      // 沿真实平滑曲线采样：位置 + 所在段（idx = 最近经过的路径点，到达即点亮）
+      function pointAt(prog) {
+        var q = ((prog % 1) + 1) % 1;
+        var len = q * TRACK_LEN;
+        var idx = 0;
+        for (var k = 0; k < 14; k++) {
+          if (len >= BOUNDS[k] && len < BOUNDS[k + 1]) { idx = k; break; }
+        }
+        var segLen = segEls[idx].getTotalLength();
+        var p = segEls[idx].getPointAtLength(len - BOUNDS[idx]);
+        return { x: p.x, y: p.y, idx: idx, t: segLen ? (len - BOUNDS[idx]) / segLen : 0 };
+      }
+
+      function place(el, p) {
+        el.setAttribute('cx', p.x.toFixed(1));
+        el.setAttribute('cy', p.y.toFixed(1));
+      }
+
+      function setCaps(i) {
+        caps.forEach(function (c) {
+          c.classList.toggle('on', parseInt(c.getAttribute('data-cap'), 10) === i);
+        });
+      }
+
+      function setActiveNodeByDataIdx(di) {
+        nodes.forEach(function (n) {
+          var ni = parseInt(n.getAttribute('data-idx'), 10);
+          var on = (ni === di) && (ni !== 8) && (selected !== ni);
+          n.classList.toggle('active', on);
+        });
+      }
+
+      function highlightStage(i, t) {
+        var m = map[i];
+        if (!m) return;
+        var node = m.node;
+        var cap = m.cap;
+        // 最后一段（Interceptor后 → Response）：数据包接近终点时点亮 Response
+        if (i === 13 && t > 0.9) { node = 9; cap = 18; }
+        setActiveNodeByDataIdx(node);
+        setCaps(cap);
+        segIds.forEach(function (id, k) {
+          document.getElementById(id).classList.toggle('on', k === i);
+        });
+      }
+
+      function clearHighlights() {
+        nodes.forEach(function (n) { n.classList.remove('active', 'selected'); });
+        caps.forEach(function (c) { c.classList.remove('on'); });
+        segIds.forEach(function (id) { document.getElementById(id).classList.remove('on'); });
+      }
+
+      // ===== 节点详情（官方文档核验事实；按 data-idx 索引） =====
+      var DETAILS = {
+        '100': {
+          tag: 'a', tagLabel: '启动阶段',
+          what: '每个 Nest 应用至少有一个模块——根模块（root module），通常叫 AppModule，定义在 app.module.ts。它是 Nest 构建「应用图」（application graph）的起点：Nest 从根模块出发，解析模块与 provider 之间的依赖关系，组织起整个应用结构。',
+          pos: '启动阶段第一步。main.ts 中 NestFactory.create(AppModule) 以根模块为参数创建应用实例，随后逐层构建模块、扫描元数据、注册路由。',
+          code: '// app.module.ts\nimport { Module } from "@nestjs/common";\nimport { CatsModule } from "./cats/cats.module.js";\n\n@Module({\n  imports: [CatsModule],\n  controllers: [AppController],\n  providers: [AppService],\n})\nexport class AppModule {}',
+          notes: [
+            '模块用 @Module() 装饰，提供 imports / controllers / providers / exports 四类元数据',
+            '根模块是入口；小应用可以只有一个根模块，大应用按功能拆成多个模块（官方推荐）',
+            'CLI 生成骨架：nest g module <name>'
+          ]
+        },
+        '101': {
+          tag: 'a', tagLabel: '启动阶段',
+          what: 'imports 数组告诉 Nest：当前模块需要引入哪些其他模块，从而使用它们「导出」的 provider。Nest 从根模块开始，沿 imports 递归加载所有被引入的模块，构建完整的模块依赖图。',
+          pos: '启动阶段第二步：根模块确定后，Nest 沿 imports 递归展开，把依赖的模块全部加载进来。',
+          code: '// app.module.ts\n@Module({\n  imports: [CatsModule, ConfigModule.forRoot()],\n})\nexport class AppModule {}',
+          notes: [
+            '模块默认「封装」：只能注入当前模块的 provider，或导入模块明确 export 的 provider',
+            '模块默认是单例，多个模块导入同一模块时共享同一份 provider 实例',
+            '希望全局可用的 provider 可用 @Global() 注册，但官方建议优先用 imports 显式管理依赖'
+          ]
+        },
+        '102': {
+          tag: 'a', tagLabel: '启动阶段',
+          what: 'Nest 启动时会扫描每个模块 @Module() 装饰器上的元数据，读取 controllers / providers / imports / exports 声明。这一步决定了：哪些控制器要被实例化、哪些 provider 要注册进 IoC 容器、模块之间如何连接。它是依赖注入与路由注册的前置准备。',
+          pos: '启动阶段第三步：拿到模块声明后，Nest 解析元数据，为下一步实例化 Provider 做准备。',
+          code: '@Module({\n  controllers: [CatsController],\n  providers: [CatsService],\n  exports: [CatsService],\n})\nexport class CatsModule {}',
+          notes: [
+            '元数据是静态声明，运行期由 Nest 读取解析，不是手动执行的代码',
+            'exports 是模块的「公共接口」：只导出需要给别人用的 provider，其余保持封装',
+            '推荐按功能拆分模块（feature module），边界清晰，符合 SOLID 原则'
+          ]
+        },
+        '103': {
+          tag: 'a', tagLabel: '启动阶段',
+          what: '扫描元数据后，Nest 把 providers 注册进内置的 IoC（控制反转）容器并实例化它们。依赖注入（DI）让对象通过构造函数自动获得依赖，无需手动 new；默认是 singleton 作用域：应用启动时实例化一次、全局共享，应用关闭时销毁。',
+          pos: '启动阶段第四步：依赖容器构建完成，所有 provider 就绪，控制器才能被正确注入。',
+          code: '@Injectable()\nexport class CatsService {\n  findAll() { return []; }\n}\n\n@Controller("cats")\nexport class CatsController {\n  constructor(private catsService: CatsService) {} // 自动注入\n}',
+          notes: [
+            '类必须加 @Injectable() 才能被 IoC 容器管理',
+            '构造函数注入的类型必须是运行期存在的「类」；interface 会被 TS 抹掉，导致启动报错 "Nest can\'t resolve dependencies"',
+            'provider 要先注册到模块 providers 数组，才能被注入'
+          ]
+        },
+        '104': {
+          tag: 'a', tagLabel: '启动阶段',
+          what: '控制器用 @Controller() 声明（可带路径前缀），方法用 @Get() / @Post() 等装饰器标注，Nest 据此构建「路由映射表」，把请求映射到对应的 handler。路由 = 控制器前缀 + 方法路径。',
+          pos: '启动阶段第五步：控制器路由注册完毕，应用才具备对外接收请求的能力。',
+          code: '@Controller("cats")\nexport class CatsController {\n  @Get()            // GET /cats\n  findAll() { return "all cats"; }\n\n  @Get(":id")       // GET /cats/:id\n  findOne(@Param("id") id: string) { return id; }\n}',
+          notes: [
+            '@Controller("cats") + @Get("breed") 的组合路径是 GET /cats/breed',
+            '方法名任意，Nest 只看装饰器，不关心方法叫什么',
+            '静态路径要声明在动态路径（:id）之前，避免被参数化路由拦截'
+          ]
+        },
+        '105': {
+          tag: 'a', tagLabel: '启动阶段',
+          what: '应用启动完成：依赖解析、模块构建、路由注册全部就绪，开始监听端口、对外接收请求。这也是「请求阶段」的入口。',
+          pos: '启动阶段最后一步，随后进入请求阶段（橙色链路）。',
+          code: '// main.ts\nasync function bootstrap() {\n  const app = await NestFactory.create(AppModule);\n  await app.listen(process.env.PORT ?? 3000);\n}\nbootstrap();',
+          notes: [
+            '启动时 Nest 会解析全部依赖并实例化 provider（默认 scope）',
+            '生命周期钩子（onModuleInit、onApplicationBootstrap 等）可在此阶段执行初始化',
+            '监听端口可用环境变量 PORT，未设置时默认 3000'
+          ]
+        },
+        '0': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '请求到达应用的入口。从这一刻起，请求按固定顺序流经各层：Middleware → Guards → Interceptors（前置）→ Pipes → Controller → Service → Interceptors（后置）→ 响应。',
+          pos: '请求阶段第一步：本图橙色链路从 Request 开始，串联整个请求生命周期。',
+          code: '// 顺序是框架固定的（官方 Request lifecycle）：\n// Middleware → Guards → Interceptors(前) → Pipes\n// → Controller → Service → Interceptors(后) → Response',
+          notes: [
+            '顺序由框架固定，不是自由排列；本图严格按官方文档顺序串联',
+            '全局 / 控制器 / 路由级的绑定，只影响同一层内部先后（如全局守卫先于路由守卫）',
+            '异常未捕获时，流程直接跳到 ExceptionFilter（黄色虚线分支）'
+          ]
+        },
+        '1': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '在 route handler 之前执行的函数，能访问 req / res / next，本质与 Express 中间件一致。可以执行任意代码、修改请求与响应对象、结束请求-响应循环，或调用 next() 把控制权交给下一个中间件。',
+          pos: '请求阶段第二步：请求最先经过中间件（全局 → 模块绑定顺序），常用于日志、CORS、解析等通用处理。',
+          code: '@Injectable()\nexport class LoggerMiddleware implements NestMiddleware {\n  use(req: Request, res: Response, next: NextFunction) {\n    console.log("Request...");\n    next(); // 必须调用，否则请求挂起\n  }\n}\n\n// 模块内绑定（不在 @Module() 里注册）\nconfigure(consumer: MiddlewareConsumer) {\n  consumer.apply(LoggerMiddleware).forRoutes(CatsController);\n}',
+          notes: [
+            '类中间件实现 NestMiddleware（use 方法）；没有依赖时可直接写函数式中间件',
+            '中间件在 configure() 中用 MiddlewareConsumer 绑定，支持 forRoutes / exclude / 通配符',
+            '中间件抛出的异常只有全局异常过滤器能捕获（此时路由 handler 还未选定）'
+          ]
+        },
+        '2': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '守卫决定请求是否被 route handler 处理——典型用途是授权 / 认证。实现 CanActivate 接口，canActivate(context) 返回 true 放行、false 拒绝（框架返回 403）。执行时机：中间件之后、拦截器之前。',
+          pos: '请求阶段第三步：Guard 在 Middleware 之后、Interceptor 之前执行。',
+          code: '@Injectable()\nexport class RolesGuard implements CanActivate {\n  canActivate(context: ExecutionContext): boolean {\n    const roles = this.reflector.get(Roles, context.getHandler());\n    if (!roles) return true;\n    const { user } = context.switchToHttp().getRequest();\n    return matchRoles(roles, user.roles);\n  }\n}\n\n// 绑定：@UseGuards(RolesGuard) / app.useGlobalGuards() / APP_GUARD',
+          notes: [
+            '与中间件的关键区别：Guard 能通过 ExecutionContext 知道接下来执行哪个 handler',
+            '返回 false 时框架自动抛 ForbiddenException（403）；可自行抛 UnauthorizedException 等',
+            'app.useGlobalGuards() 注册的全局守卫无法注入依赖，需要依赖时用 APP_GUARD 在模块中注册'
+          ]
+        },
+        '3': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '拦截器是 AOP 风格的组件。intercept(context, next) 中，调用 next.handle() 之前的代码就是「前置逻辑」：附加日志、缓存判断、统计等。如果不调用 handle()，route handler 根本不会执行。',
+          pos: '请求阶段第四步：请求侧拦截器按 全局 → 控制器 → 路由 顺序执行（前置部分）。',
+          code: '@Injectable()\nexport class LoggingInterceptor implements NestInterceptor {\n  intercept(context: ExecutionContext, next: CallHandler): Observable&lt;any&gt; {\n    console.log("Before...");             // 前置逻辑\n    return next.handle().pipe(\n      tap(() =&gt; console.log("After...")), // 后置逻辑\n    );\n  }\n}\n// 绑定：@UseInterceptors(LoggingInterceptor)',
+          notes: [
+            'handle() 返回 RxJS Observable；后置逻辑用 tap / map / catchError 等操作符',
+            '不调用 handle() 等于短路：请求直接返回，handler 不会执行',
+            '前置可做日志、缓存判断；后置可包装响应、改写异常'
+          ]
+        },
+        '4': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '管道在 route handler 调用前处理其参数，实现 PipeTransform 接口的 transform(value, metadata)。两大用途：转换（如字符串 → 整数）与校验（数据不合法则抛异常）。它是系统边界处校验外部数据的推荐位置。',
+          pos: '请求阶段第五步：Pipes 在 Controller 之前执行（全局 → 控制器 → 路由 → 参数级）。',
+          code: '@Injectable()\nexport class ParseIntPipe implements PipeTransform&lt;string, number&gt; {\n  transform(value: string): number {\n    const val = parseInt(value, 10);\n    if (isNaN(val)) throw new BadRequestException("Validation failed");\n    return val;\n  }\n}\n\n// 参数级绑定：@Param("id", ParseIntPipe)\n// 内置管：ParseIntPipe / ParseUUIDPipe / ValidationPipe ...',
+          notes: [
+            '内置管开箱即用：ParseIntPipe、ParseFloatPipe、ParseUUIDPipe、ValidationPipe 等',
+            '管道抛异常会进入异常层，handler 不会执行——所以适合做边界校验',
+            '参数级多个管道：多个参数时从最后一个参数开始处理'
+          ]
+        },
+        '5': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '控制器负责处理进来的请求并返回响应。@Controller() + 方法装饰器定义路由；控制器从请求中取参数（@Body / @Param / @Query），调用 Service 完成业务，把结果返回。控制器本身不写业务逻辑。',
+          pos: '请求阶段第六步：请求通过前置各层后到达 Controller 路由分配。',
+          code: '@Controller("cats")\nexport class CatsController {\n  constructor(private catsService: CatsService) {}\n\n  @Post()\n  create(@Body() dto: CreateCatDto) {\n    return this.catsService.create(dto);\n  }\n\n  @Get(":id")\n  findOne(@Param("id") id: string) {\n    return this.catsService.findOne(id);\n  }\n}',
+          notes: [
+            '返回对象 / 数组自动序列化为 JSON；primitive 原样返回',
+            'POST 默认 201，其余默认 200，可用 @HttpCode() 修改',
+            '使用 @Res() 会关闭该路由的标准响应机制；混用需 @Res({ passthrough: true })'
+          ]
+        },
+        '6': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '承载业务逻辑的 provider，用 @Injectable() 标记。控制器只做「分发」，数据存取、业务规则交给 Service，符合单一职责原则（SRP）。',
+          pos: '请求阶段第七步：Controller 调用 Service 执行业务逻辑。',
+          code: '@Injectable()\nexport class CatsService {\n  private readonly cats: Cat[] = [];\n\n  create(cat: Cat) { this.cats.push(cat); }\n  findAll(): Cat[] { return this.cats; }\n}',
+          notes: [
+            'Service 必须注册在所属模块的 providers 数组，才能被控制器注入',
+            '默认 singleton：应用级单例，多处注入共享同一实例',
+            '构造函数注入的类型必须是「类」；interface 会因类型被抹掉而启动报错'
+          ]
+        },
+        '7': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: 'handle() 返回的 Observable 流上的处理就是「后置逻辑」：map() 转换响应体、tap() 附加日志、catchError() 改写异常、timeout() 超时控制等。响应侧按 路由 → 控制器 → 全局 逆序解析。',
+          pos: '请求阶段第八步：Service 返回结果后，沿拦截器链逆序处理响应（后置部分）。',
+          code: '@Injectable()\nexport class TransformInterceptor&lt;T&gt; implements NestInterceptor&lt;T, any&gt; {\n  intercept(context: ExecutionContext, next: CallHandler): Observable&lt;any&gt; {\n    return next.handle().pipe(map(data =&gt; ({ data })));\n  }\n}',
+          notes: [
+            '响应侧顺序与请求侧相反：路由 → 控制器 → 全局（后进先出）',
+            '响应映射对 @Res() 直出的路由不生效',
+            'catchError 能读到管道 / 控制器 / 服务抛出的错误，可统一改写为网关异常等'
+          ]
+        },
+        '9': {
+          tag: 'b', tagLabel: '请求阶段',
+          what: '请求生命周期的终点：服务器把处理结果返回给客户端。标准模式下，handler 的返回值由框架自动序列化输出；也可用 @Res() 直接操作底层响应对象。',
+          pos: '请求阶段最后一步：Response 返回客户端，橙色链路结束。',
+          code: '// 标准返回（推荐）\n@Get()\nfindAll() { return []; }        // → 200，JSON []\n\n// 库特定方式（谨慎使用）\n@Get()\nfindAll(@Res() res: Response) {\n  res.status(HttpStatus.OK).json([]);\n}',
+          notes: [
+            '默认状态码：GET 200、POST 201；@HttpCode() 可自定义',
+            '返回 Promise 也可以，Nest 会等待完成后序列化',
+            '@Res() 直出会失去拦截器 / @HttpCode 等标准能力，混用需 passthrough'
+          ]
+        },
+        '8': {
+          tag: 'err', tagLabel: '异常兜底',
+          what: '异常兜底：只有发生「未捕获异常」时，请求才会直接跳到异常层。内置异常层会处理 HttpException 并返回友好 JSON；未识别异常默认返回 500。可用 @Catch() + @UseFilters 自定义过滤器。',
+          pos: '分支节点（黄色虚线）：请求链上任一环节抛未捕获异常，即跳到这里；不抛异常则不经过。',
+          code: '@Catch(HttpException)\nexport class HttpExceptionFilter implements ExceptionFilter {\n  catch(exception: HttpException, host: ArgumentsHost) {\n    const ctx = host.switchToHttp();\n    const response = ctx.getResponse();\n    response.status(exception.getStatus()).json({\n      statusCode: exception.getStatus(),\n      timestamp: new Date().toISOString(),\n      path: ctx.getRequest().url,\n    });\n  }\n}\n// 绑定：@UseFilters(...) / app.useGlobalFilters() / APP_FILTER',
+          notes: [
+            '过滤器解析顺序与其他组件相反：路由级 → 控制器级 → 全局',
+            '自己 try/catch 掉的异常不会触发过滤器；只有未捕获异常才会',
+            'middleware 抛出的异常只有全局过滤器能捕获'
+          ]
+        }
+      };
+
+      function renderDetail(d) {
+        if (!d) return '<div class="placeholder">[布局占位] 详情内容待填充。</div>';
+        return (
+          '<div class="d-tag ' + d.tag + '">' + d.tagLabel + '</div>' +
+          '<div class="d-sec"><h3>这个阶段在做什么</h3><p>' + d.what + '</p></div>' +
+          '<div class="d-sec"><h3>在生命周期中的位置</h3><p>' + d.pos + '</p></div>' +
+          '<div class="d-sec"><h3>示例代码</h3><pre>' + d.code + '</pre></div>' +
+          '<div class="d-sec"><h3>注意事项</h3><ul>' +
+          d.notes.map(function (n) { return '<li>' + n + '</li>'; }).join('') +
+          '</ul></div>'
+        );
+      }
+
+      // ===== 阶段代码演示：分步打字机（代码均来自官方文档示例） =====
+      // key = 节点 data-idx；steps 每步：label 步骤说明 + lines 代码行
+      var DEMO = {
+        // —— 启动阶段 ——
+        // 每段步骤均按真实书写顺序：import（顶部）→ 定义 → 使用/接线 → 导出
+        '100': {   // AppModule 根模块（官方 modules 文档示例）
+          file: 'app.module.ts',
+          steps: [
+            { label: '新建文件 app.module.ts', lines: ['import { Module } from "@nestjs/common";'] },
+            { label: '引入子模块 CatsModule', lines: ['import { CatsModule } from "./cats/cats.module";'] },
+            { label: '声明 @Module 元数据（imports/controllers/providers）', lines: ['@Module({', '  imports: [CatsModule],', '  controllers: [AppController],', '  providers: [AppService],', '})'] },
+            { label: '导出 AppModule 类', lines: ['export class AppModule {}'] }
+          ]
+        },
+        '101': {   // imports 递归加载
+          file: 'app.module.ts',
+          steps: [
+            { label: '引入装饰器与功能模块', lines: ['import { Module } from "@nestjs/common";', 'import { CatsModule } from "./cats/cats.module";'] },
+            { label: '在 @Module({ imports }) 中声明依赖', lines: ['@Module({', '  imports: [CatsModule],', '})', 'export class AppModule {}'] },
+            { label: 'imports 会递归加载其依赖', lines: ['// CatsModule 自身也可 imports 其他模块，形成依赖树', '// 被依赖模块需在 exports 中导出 provider 才能被外部注入'] }
+          ]
+        },
+        '102': {   // Module 扫描元数据并声明（官方 modules 文档 cats.module.ts）
+          file: 'cats.module.ts',
+          steps: [
+            { label: '引入控制器与服务', lines: ['import { Module } from "@nestjs/common";', 'import { CatsController } from "./cats.controller";', 'import { CatsService } from "./cats.service";'] },
+            { label: '声明模块元数据', lines: ['@Module({', '  controllers: [CatsController],', '  providers: [CatsService],', '})'] },
+            { label: '导出类，Nest 启动时扫描声明', lines: ['export class CatsModule {}', '// 启动时扫描 controllers / providers / imports 建立应用图'] }
+          ]
+        },
+        '103': {   // 实例化 Provider / DI（官方 providers 文档 cats.service.ts）
+          file: 'cats.service.ts',
+          steps: [
+            { label: '引入装饰器与类型', lines: ['import { Injectable } from "@nestjs/common";', 'import { Cat } from "./interfaces/cat.interface";'] },
+            { label: '@Injectable 标记可被 IoC 管理', lines: ['@Injectable()', 'export class CatsService {', '  private readonly cats: Cat[] = [];', '  findAll(): Cat[] { return this.cats; }', '}'] },
+            { label: '构造函数按类型注入（DI）', lines: ['// 消费方构造函数声明类型即可注入：', '// constructor(private catsService: CatsService) {}'] }
+          ]
+        },
+        '104': {   // 注册控制器路由（官方 controllers 文档）
+          file: 'cats.controller.ts',
+          steps: [
+            { label: '引入路由装饰器', lines: ['import { Controller, Get, Param } from "@nestjs/common";'] },
+            { label: '控制器前缀 + 方法路径', lines: ['@Controller("cats")', 'export class CatsController {', '  @Get()', '  findAll(): string { return "This action returns all cats"; }'] },
+            { label: '动态参数路由', lines: ['  @Get(":id")', '  findOne(@Param("id") id: string) {', '    return `This action returns a #${id} cat`;', '  }', '}'] }
+          ]
+        },
+        '105': {   // 应用就绪（官方 main.ts 原文）
+          file: 'main.ts',
+          steps: [
+            { label: '引入 NestFactory 与应用模块', lines: ['import { NestFactory } from "@nestjs/core";', 'import { AppModule } from "./app.module";'] },
+            { label: '创建应用实例', lines: ['async function bootstrap() {', '  const app = await NestFactory.create(AppModule);'] },
+            { label: '监听端口对外提供服务', lines: ['  await app.listen(process.env.PORT ?? 3000);', '}', 'bootstrap();'] }
+          ]
+        },
+        // —— 请求阶段 ——
+        '0': {   // Request 进入（请求生命周期顺序）
+          file: 'request-lifecycle.txt',
+          steps: [
+            { label: '请求按固定顺序流经各层', lines: ['Request', '  → Middleware → Guards → Interceptors(前) → Pipes', '  → Controller → Service', '  → Interceptors(后) → Response'] },
+            { label: '任何一层抛错都由 Exception Filter 兜底', lines: ['// 前一层未放行（next() / handle()）时后续层不执行'] }
+          ]
+        },
+        '1': {   // Middleware（官方 middleware 文档原文）
+          file: 'logger.middleware.ts',
+          steps: [
+            { label: '引入装饰器与类型', lines: ['import { Injectable, NestMiddleware } from "@nestjs/common";', 'import { Request, Response, NextFunction } from "express";'] },
+            { label: '实现 NestMiddleware（use 方法）', lines: ['@Injectable()', 'export class LoggerMiddleware implements NestMiddleware {', '  use(req: Request, res: Response, next: NextFunction) {', '    console.log("Request...");', '    next();', '  }', '}'] },
+            { label: '在模块 configure() 中绑定', lines: ['// 消费模块 implements NestModule：', '// configure(consumer: MiddlewareConsumer) {', '//   consumer.apply(LoggerMiddleware).forRoutes("cats");', '// }'] }
+          ]
+        },
+        '2': {   // Guard（官方 guards 文档示例）
+          file: 'roles.guard.ts',
+          steps: [
+            { label: '引入 Guard 相关类型', lines: ['import { Injectable, CanActivate, ExecutionContext } from "@nestjs/common";'] },
+            { label: '实现 CanActivate 接口', lines: ['@Injectable()', 'export class RolesGuard implements CanActivate {', '  canActivate(context: ExecutionContext): boolean {'] },
+            { label: '按角色放行 / 拒绝', lines: ['    const { user } = context.switchToHttp().getRequest();', '    return matchRoles(roles, user.roles);', '  }', '}'] }
+          ]
+        },
+        '3': {   // Interceptor 前置（官方 interceptors 文档 LoggingInterceptor）
+          file: 'logging.interceptor.ts',
+          steps: [
+            { label: '引入 Interceptor 相关类型', lines: ['import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from "@nestjs/common";', 'import { Observable } from "rxjs";', 'import { tap } from "rxjs/operators";'] },
+            { label: '前置逻辑写在 handle() 之前', lines: ['@Injectable()', 'export class LoggingInterceptor implements NestInterceptor {', '  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {', '    console.log("Before...");', '    const now = Date.now();'] },
+            { label: '调用 handle() 放行（返回 Observable）', lines: ['    return next.handle().pipe(', '      tap(() => console.log(`After... ${Date.now() - now}ms`)),', '    );', '  }', '}'] }
+          ]
+        },
+        '4': {   // Pipe（官方 pipes 文档 ParseIntPipe）
+          file: 'parse-int.pipe.ts',
+          steps: [
+            { label: '引入 Pipe 相关类型', lines: ['import { PipeTransform, Injectable, ArgumentMetadata, BadRequestException } from "@nestjs/common";'] },
+            { label: '实现 PipeTransform（转换）', lines: ['@Injectable()', 'export class ParseIntPipe implements PipeTransform {', '  transform(value: string, metadata: ArgumentMetadata): number {', '    const val = parseInt(value, 10);'] },
+            { label: '校验失败抛异常（handler 不执行）', lines: ['    if (isNaN(val)) throw new BadRequestException("Validation failed");', '    return val;', '  }', '}'] }
+          ]
+        },
+        '5': {   // Controller（官方 controllers 文档）
+          file: 'cats.controller.ts',
+          steps: [
+            { label: '引入控制器与 Service', lines: ['import { Controller, Post, Body } from "@nestjs/common";', 'import { CreateCatDto } from "./dto/create-cat.dto";', 'import { CatsService } from "./cats.service";'] },
+            { label: '控制器前缀 + 注入 Service', lines: ['@Controller("cats")', 'export class CatsController {', '  constructor(private catsService: CatsService) {}'] },
+            { label: '接收请求并调用 Service', lines: ['  @Post()', '  create(@Body() dto: CreateCatDto) {', '    return this.catsService.create(dto);', '  }', '}'] }
+          ]
+        },
+        '6': {   // Service（官方 providers 文档 cats.service.ts）
+          file: 'cats.service.ts',
+          steps: [
+            { label: '引入装饰器与类型', lines: ['import { Injectable } from "@nestjs/common";', 'import { Cat } from "./interfaces/cat.interface";'] },
+            { label: '@Injectable 承载业务逻辑', lines: ['@Injectable()', 'export class CatsService {', '  private readonly cats: Cat[] = [];'] },
+            { label: '数据存取（状态封装）', lines: ['  create(cat: Cat) { this.cats.push(cat); }', '  findAll(): Cat[] { return this.cats; }', '}'] }
+          ]
+        },
+        '7': {   // Interceptor 后置（官方 interceptors 文档 TransformInterceptor）
+          file: 'transform.interceptor.ts',
+          steps: [
+            { label: '引入 Interceptor 相关类型', lines: ['import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from "@nestjs/common";', 'import { Observable } from "rxjs";', 'import { map } from "rxjs/operators";'] },
+            { label: '响应侧拦截（后置包装）', lines: ['@Injectable()', 'export class TransformInterceptor implements NestInterceptor {', '  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {'] },
+            { label: 'map 操作符包装响应体', lines: ['    return next.handle().pipe(map(data => ({ data })));', '  }', '}'] }
+          ]
+        },
+        '9': {   // Response（官方 controllers 文档）
+          file: 'cats.controller.ts',
+          steps: [
+            { label: '引入返回相关类型', lines: ['import { Controller, Get, Res, HttpStatus } from "@nestjs/common";', 'import { Response } from "express";'] },
+            { label: '标准返回：自动序列化 JSON', lines: ['@Controller("cats")', 'export class CatsController {', '  @Get()', '  findAll() { return []; }', '}'] },
+            { label: '库特定响应（谨慎使用）', lines: ['// 或显式使用 @Res 接管响应：', 'findAll(@Res() res: Response) {', '  res.status(HttpStatus.OK).json([]);', '}'] }
+          ]
+        }
+      };
+
+      // 兜底：未在 DEMO 中定义的节点，直接用 DETAILS.code 按行打字
+      function getDemo(node) {
+        if (DEMO[node]) return DEMO[node];
+        var d = DETAILS[node];
+        var lines = d ? d.code.split('\n') : ['// 暂无代码示例'];
+        var file = lines[0].replace(/^\/\/\s*/, '').trim() || 'NestJS 概念';
+        return { file: file, steps: [{ label: (d && d.tagLabel) || '', lines: lines }] };
+      }
+
+      var cdFile = document.getElementById('cdFile');
+      var cdStage = document.getElementById('cdStage');
+      var cdStep = document.getElementById('cdStep');
+      var cdCode = document.getElementById('cdCode');
+      var caretEl = document.createElement('span');
+      caretEl.className = 'cd-caret';
+      caretEl.textContent = '▍';
+
+      // 打字机状态：按步骤分块输出（每步一次打出全部代码行），
+      // 当前步骤代码高亮，下一步输出时上一步恢复普通颜色
+      var typer = { node: -1, step: 0, done: false, pauseUntil: 0, stepPause: 700 };
+
+      function updateStepLabel(d) {
+        cdStep.textContent = '步骤 ' + (typer.step + 1) + '/' + d.steps.length + ' · ' + d.steps[typer.step].label;
+      }
+
+      // 渲染：只显示「已完成步骤 + 当前步骤」的行；新步骤的行追加出现并高亮
+      function renderStep(d) {
+        // 上一步的高亮先取消（颜色过渡回普通色）
+        var old = cdCode.getElementsByClassName('cd-cur');
+        for (var i = 0; i < old.length; i++) old[i].classList.remove('cd-cur');
+        var st = d.steps[typer.step];
+        var frag = document.createDocumentFragment();
+        for (var l = 0; l < st.lines.length; l++) {
+          if (typer.step > 0 || l > 0) frag.appendChild(document.createTextNode('\n'));
+          var sp = document.createElement('span');
+          sp.textContent = st.lines[l];
+          sp.className = 'cd-cur';
+          frag.appendChild(sp);
+        }
+        cdCode.insertBefore(frag, caretEl);
+        // 自动跟随滚动到底部：确保新输出的高亮代码始终可见，不被遮挡
+        cdCode.scrollTop = cdCode.scrollHeight;
+      }
+
+      function typeTick(idx, dt, now) {
+        var node = map[idx].node;
+        if (node !== typer.node) {
+          typer.node = node;
+          typer.step = 0; typer.done = false; typer.pauseUntil = 0;
+          var d0 = getDemo(node);
+          cdFile.textContent = d0.file;
+          cdStage.textContent = (DETAILS[node] && DETAILS[node].tagLabel) || '';
+          updateStepLabel(d0);
+          // 步骤停留时间自适应：让全部步骤在当前段时长内展示完（350–900ms/步）
+          var segDur = (BOUNDS[idx + 1] - BOUNDS[idx]) / TRACK_LEN * DURATION; // 当前段时长 ms
+          var pauses = d0.steps.length * 90;
+          typer.stepPause = Math.max(350, Math.min(900, (segDur - pauses) / d0.steps.length));
+          cdCode.textContent = '';
+          cdCode.appendChild(caretEl);
+          renderStep(d0);
+          typer.done = d0.steps.length === 1;
+          typer.pauseUntil = now + typer.stepPause;
+          return;
+        }
+        if (typer.done) return;
+        if (now < typer.pauseUntil) return;
+        var d = getDemo(node);
+        if (typer.step + 1 >= d.steps.length) { typer.done = true; return; }
+        typer.step += 1;
+        updateStepLabel(d);
+        renderStep(d);
+        typer.pauseUntil = now + typer.stepPause;
+      }
+
+      function setSelected(di) {
+        selected = di;
+        nodes.forEach(function (n) {
+          var ni = parseInt(n.getAttribute('data-idx'), 10);
+          n.classList.toggle('selected', ni === di);
+          if (ni !== di) n.classList.remove('active');
+        });
+        var node = nodes.filter(function (n) {
+          return parseInt(n.getAttribute('data-idx'), 10) === di;
+        })[0];
+        setCaps(parseInt(node.getAttribute('data-cap'), 10));
+      }
+
+      // 段间休息：每个动画阶段完成时停顿 300ms，留出阅读代码的反应时间
+      var SEG_REST = 300;
+      var segRest = { on: false, until: 0 };
+
+      function step(ts) {
+        if (!last) last = ts;
+        var dt = Math.min(50, ts - last);
+        last = ts;
+        if (playing && selected < 0) {
+          if (segRest.on) {
+            if (ts >= segRest.until) segRest.on = false;
+            // 休息期间不更新画面：pkt 停留在上一段完成位置，代码保持完整显示
+          } else {
+            var np = progress + dt / DURATION;
+            if (np > 1) np -= 1;
+            if (pointAt(np).idx !== pointAt(progress).idx) {
+              // 跨段：立即推进到新段起点（避免重复触发休息死循环），
+              // 画面暂不更新以保持上一段完成态，停顿 SEG_REST 后正常进入新段
+              progress = np;
+              segRest.on = true;
+              segRest.until = ts + SEG_REST;
+            } else {
+              progress = np;
+              var p = pointAt(progress);
+              place(pkt1, p);
+              highlightStage(p.idx, p.t);
+              typeTick(p.idx, dt, ts);
+            }
+          }
+        }
+        place(pkt1, pointAt(progress));
+        place(pkt2, pointAt(progress - 0.015));
+        place(pkt3, pointAt(progress - 0.03));
+        requestAnimationFrame(step);
+      }
+
+      function openDrawer(di) {
+        playing = false;
+        btnState = 'play';
+        setBtn('播放');
+        stage.classList.add('open');
+        document.getElementById('work').classList.add('open-drawer');
+        drawer.setAttribute('aria-hidden', 'false');
+        var node = nodes.filter(function (n) {
+          return parseInt(n.getAttribute('data-idx'), 10) === di;
+        })[0];
+        var title = node.querySelector('.name').textContent;
+        if (title === 'Exception') title = 'ExceptionFilter';
+        drawerTitle.textContent = title;
+        drawerBody.innerHTML = renderDetail(DETAILS[di]);
+        setSelected(di);
+      }
+
+      function closeDrawer() {
+        stage.classList.remove('open');
+        document.getElementById('work').classList.remove('open-drawer');
+        drawer.setAttribute('aria-hidden', 'true');
+        selected = -1;
+        clearHighlights();
+        playing = true;
+        btnState = 'pause';
+        setBtn('暂停');
+      }
+
+      function setBtn(label) { document.getElementById('btnCtrl').textContent = label; }
+
+      // 单按钮两态，文字与播放状态严格同步：
+      //   播放中 →「暂停」→ 点击暂停；已暂停 →「播放」→ 点击恢复
+      function handleBtn() {
+        if (stage.classList.contains('open')) { closeDrawer(); return; }
+        if (btnState === 'pause') {
+          playing = false;
+          btnState = 'play';
+          setBtn('播放');
+        } else {
+          playing = true;
+          btnState = 'pause';
+          setBtn('暂停');
+        }
+      }
+
+      nodes.forEach(function (node) {
+        node.addEventListener('click', function () {
+          openDrawer(parseInt(node.getAttribute('data-idx'), 10));
+        });
+      });
+      closeBtn.addEventListener('click', closeDrawer);
+      document.getElementById('btnCtrl').addEventListener('click', handleBtn);
+
+      // 转屏 / 窗口尺寸变化后重新测量轨道长度（兜底先竖屏后横屏的场景）
+      window.addEventListener('resize', function () { measureTrack(); });
+
+      requestAnimationFrame(step);
+    })();
+  </script>
+</body>
+</html>
